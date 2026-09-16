@@ -1,38 +1,47 @@
-import json
-
 from django.core.exceptions import RequestDataTooBig
-from django.http import HttpRequest, JsonResponse
+from rest_framework import status
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from orders.services import OrderError, create_order, validate_payload
+from orders.serializers import OrderCreateSerializer, OrderOutputSerializer
+from orders.services import OrderError, create_order
+
+ORDER_ERROR_STATUS = {
+    "forbidden": status.HTTP_403_FORBIDDEN,
+    "goods_not_found": status.HTTP_404_NOT_FOUND,
+    "promo_already_used": status.HTTP_409_CONFLICT,
+    "promo_limit_reached": status.HTTP_409_CONFLICT,
+    "promo_not_found": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "promo_expired": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "promo_not_applicable": status.HTTP_422_UNPROCESSABLE_ENTITY,
+}
 
 
-def error_response(code: str, message: str, status: int) -> JsonResponse:
-    return JsonResponse({"error": {"code": code, "message": message}}, status=status)
+def error_response(code: str, message: str, status_code: int, **extra) -> Response:
+    error = {"code": code, "message": message, **extra}
+    return Response({"error": error}, status=status_code)
 
 
-def csrf_failure(request: HttpRequest, reason: str = "") -> JsonResponse:
-    return error_response("csrf_failed", "A valid CSRF token is required.", 403)
-
-
-def create_order_view(request: HttpRequest) -> JsonResponse:
-    if request.method != "POST":
-        response = error_response("method_not_allowed", "Use POST.", 405)
-        response["Allow"] = "POST"
-        return response
-    try:
-        if not request.user.is_authenticated:
-            return error_response("unauthenticated", "Log in before creating an order.", 401)
-        actor_id = request.user.pk
-        if request.content_type != "application/json":
-            return error_response("unsupported_media_type", "Use application/json.", 415)
+class OrderCreateAPIView(APIView):
+    def post(self, request: Request) -> Response:
         try:
-            payload: object = json.loads(request.body)
+            serializer = OrderCreateSerializer(data=request.data)
         except RequestDataTooBig:
-            return error_response("request_too_large", "Request body exceeds 64 KiB.", 413)
-        except (ValueError, RecursionError):
-            return error_response("invalid_json", "Request body must be valid JSON.", 400)
-        data = validate_payload(payload)
-        result = create_order(data, actor_id=actor_id)
-    except OrderError as exc:
-        return error_response(exc.code, str(exc), exc.status)
-    return JsonResponse(result, status=201)
+            return error_response(
+                "request_too_large",
+                "Request body exceeds 64 KiB.",
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        if not serializer.is_valid():
+            return error_response(
+                "invalid_request",
+                "Request validation failed.",
+                status.HTTP_400_BAD_REQUEST,
+                details=serializer.errors,
+            )
+        try:
+            result = create_order(actor_id=request.user.pk, **serializer.validated_data)
+        except OrderError as exc:
+            return error_response(exc.code, str(exc), ORDER_ERROR_STATUS[exc.code])
+        return Response(OrderOutputSerializer(result).data, status=status.HTTP_201_CREATED)

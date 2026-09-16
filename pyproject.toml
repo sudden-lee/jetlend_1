@@ -1,7 +1,11 @@
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-extend-exclude = [".uv-cache"]
+extend-exclude = [".uv-cache", "migrations"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+testpaths = ["tests"]

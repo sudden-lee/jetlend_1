@@ -16,7 +16,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Good)
 class GoodAdmin(admin.ModelAdmin):
-    list_display = ["id", "name", "category", "price_cents", "excluded_from_promotions"]
+    list_display = ["id", "name", "category", "price", "excluded_from_promotions"]
     list_filter = ["excluded_from_promotions", "category"]
     list_select_related = ["category"]
     search_fields = ["name", "category__name"]
@@ -36,7 +36,7 @@ class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
     can_delete = False
-    readonly_fields = ["good", "quantity", "price_cents", "discount", "total_cents"]
+    readonly_fields = ["good", "quantity", "price", "discount", "total"]
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("good")
@@ -55,15 +55,15 @@ class OrderAdmin(admin.ModelAdmin):
         "user",
         "promo_code",
         "created_at",
-        "price_cents",
+        "price",
         "discount",
-        "total_cents",
+        "total",
     ]
     list_filter = ["created_at"]
     list_select_related = ["user", "promo_code"]
     search_fields = ["=id", "=user__username", "=promo_code__code"]
     ordering = ["-created_at"]
-    readonly_fields = ["user", "promo_code", "created_at", "price_cents", "discount", "total_cents"]
+    readonly_fields = ["user", "promo_code", "created_at", "price", "discount", "total"]
     inlines = [OrderItemInline]
 
     def has_add_permission(self, request) -> bool:

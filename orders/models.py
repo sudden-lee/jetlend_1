@@ -20,10 +20,12 @@ class Category(models.Model):
 class Good(models.Model):
     name = models.CharField("название", max_length=200)
     category = models.ForeignKey(Category, on_delete=models.PROTECT, verbose_name="категория")
-    price_cents = models.PositiveBigIntegerField(
-        "цена в копейках",
-        validators=[MinValueValidator(1), MaxValueValidator(1_000_000_000)],
-        help_text="Цена одной единицы товара: 100 = 1,00 денежной единицы.",
+    price = models.DecimalField(
+        "цена",
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01")), MaxValueValidator(Decimal("10000000"))],
+        help_text="Цена одной единицы товара.",
     )
     excluded_from_promotions = models.BooleanField("исключён из акций", default=False)
 
@@ -32,7 +34,7 @@ class Good(models.Model):
         verbose_name_plural = "товары"
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(price_cents__gte=1, price_cents__lte=1_000_000_000),
+                condition=models.Q(price__gte=Decimal("0.01"), price__lte=Decimal("10000000")),
                 name="good_price_range",
             ),
         ]
@@ -97,19 +99,22 @@ class Order(models.Model):
         verbose_name="промокод",
     )
     created_at = models.DateTimeField("создан", auto_now_add=True)
-    price_cents = models.PositiveBigIntegerField("стоимость до скидки, в копейках")
+    price = models.DecimalField("стоимость до скидки", max_digits=16, decimal_places=2)
     discount = models.DecimalField(
         "фактическая ставка скидки", max_digits=5, decimal_places=4, default=0
     )
-    total_cents = models.PositiveBigIntegerField("итого, в копейках")
+    total = models.DecimalField("итого", max_digits=16, decimal_places=2)
 
     class Meta:
         verbose_name = "заказ"
         verbose_name_plural = "заказы"
         constraints = [
-            models.UniqueConstraint(fields=["user", "promo_code"], name="order_user_promo_once"),
             models.CheckConstraint(
-                condition=models.Q(total_cents__lte=models.F("price_cents")),
+                condition=models.Q(price__gt=0),
+                name="order_positive_price",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(total__gte=0, total__lte=models.F("price")),
                 name="order_total_within_price",
             ),
             models.CheckConstraint(
@@ -158,11 +163,14 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField(
         "количество", validators=[MinValueValidator(1), MaxValueValidator(10_000)]
     )
-    price_cents = models.PositiveBigIntegerField(
-        "цена за единицу, в копейках", help_text="Снимок цены на момент создания заказа."
+    price = models.DecimalField(
+        "цена за единицу",
+        max_digits=10,
+        decimal_places=2,
+        help_text="Снимок цены на момент создания заказа.",
     )
     discount = models.DecimalField("ставка скидки", max_digits=5, decimal_places=4, default=0)
-    total_cents = models.PositiveBigIntegerField("итого, в копейках")
+    total = models.DecimalField("итого", max_digits=16, decimal_places=2)
 
     class Meta:
         verbose_name = "строка заказа"
@@ -174,7 +182,7 @@ class OrderItem(models.Model):
                 name="item_quantity_range",
             ),
             models.CheckConstraint(
-                condition=models.Q(price_cents__gte=1, price_cents__lte=1_000_000_000),
+                condition=models.Q(price__gte=Decimal("0.01"), price__lte=Decimal("10000000")),
                 name="item_price_range",
             ),
             models.CheckConstraint(
@@ -182,7 +190,10 @@ class OrderItem(models.Model):
                 name="item_discount_range",
             ),
             models.CheckConstraint(
-                condition=models.Q(total_cents__lte=models.F("price_cents") * models.F("quantity")),
+                condition=models.Q(
+                    total__gte=0,
+                    total__lte=models.F("price") * models.F("quantity"),
+                ),
                 name="item_total_within_price",
             ),
         ]
