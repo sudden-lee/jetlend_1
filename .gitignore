@@ -1,0 +1,9 @@
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.env
+.coverage
+htmlcov/
+staticfiles/

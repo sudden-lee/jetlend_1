@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+  <head><meta charset="utf-8"><title>Вход</title></head>
+  <body>
+    {% if user.is_authenticated %}
+      <p>Вы вошли как {{ user.username }}. Ваш user_id: {{ user.pk }}.</p>
+      <p>Отправляйте заказы на /api/orders/ с cookie сессии и заголовком X-CSRFToken.</p>
+      <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}<button type="submit">Выйти</button>
+      </form>
+    {% else %}
+      <h1>Вход</h1>
+      <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Войти</button>
+      </form>
+    {% endif %}
+  </body>
+</html>
