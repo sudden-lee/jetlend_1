@@ -34,7 +34,7 @@ orders/
   admin.py              админка: каталог/промокоды редактируемые,
                         заказы и журналы — только просмотр
   management/commands/  seed_demo, purge_idempotency_keys
-tests/                  36 тестов: pytest + pytest-django
+tests/                  38 тестов: pytest + pytest-django
 ```
 
 ## Локальный запуск
@@ -196,7 +196,7 @@ PostgreSQL блокирует выбранный `PromoCode` через `select_
 
 ## Проверки
 
-Проверено 36 тестами через pytest и pytest-django на PostgreSQL 16. Набор включает
+Проверено 38 тестами через pytest и pytest-django на PostgreSQL 16. Набор включает
 конкурентное применение промокода, два одновременных запроса с одним ключом,
 ограниченные DB-ретраи, throttling, округление денег, откат транзакции и очистку
 истёкших ключей.
