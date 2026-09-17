@@ -6,6 +6,37 @@ PostgreSQL 16.
 HTTP API реализован на Django REST Framework: `APIView`, отдельные входные и
 выходные serializers, session authentication и CSRF.
 
+## Правила применения промокода
+
+| Правило | Где проверяется |
+| --- | --- |
+| Промокод должен существовать | `_lock_promo`, код ошибки `promo_not_found` |
+| Не должен быть просрочен (`expires_at`) | `_lock_promo`, `promo_expired` |
+| Ограничение на максимум использований (`max_uses`/`uses_count`) | `_lock_promo`, `promo_limit_reached`; инвариант `uses_count <= max_uses` защищён и в БД |
+| Один пользователь не может использовать код повторно | `_lock_promo`, `promo_already_used`; `UNIQUE(user, promo_code)` на `PromoCodeRedemption` |
+| Может быть ограничен категорией товаров | `PromoCode.category` (nullable FK), проверка в `_build_lines` |
+| Товары с исключением из акций (`excluded_from_promotions`) | проверка в `_build_lines`; если ни одна строка не подошла — `promo_not_applicable`, лимит не расходуется |
+
+Реализация — `orders/services.py`.
+
+## Структура проекта
+
+```
+config/                 настройки Django, URL-роутинг
+orders/
+  models.py             Category, Good, PromoCode, Order, OrderItem,
+                        PromoCodeRedemption, OrderIdempotencyKey
+  serializers.py        валидация запроса, форматирование ответа
+  services.py           бизнес-логика create_order() — единственная точка входа
+  exceptions.py         доменные ошибки (OrderError, RequestValidationError)
+                        и их HTTP-форматирование (api_exception_handler)
+  views.py              HTTP-эндпоинт POST /api/orders/
+  admin.py              админка: каталог/промокоды редактируемые,
+                        заказы и журналы — только просмотр
+  management/commands/  seed_demo, purge_idempotency_keys
+tests/                  36 тестов: pytest + pytest-django
+```
+
 ## Локальный запуск
 
 Перейдите в `task1` и выполните в PowerShell:
@@ -117,10 +148,9 @@ DRF выполняет аутентификацию, CSRF, разбор JSON и 
 `details` с ошибками конкретных полей. Ошибки протокола DRF возвращает в своём
 стандартном JSON-формате `detail`.
 
-Бизнес-ошибки (`OrderError`) форматирует не вьюха, а общий
+Бизнес-ошибки (`OrderError`) форматирует общий
 `REST_FRAMEWORK["EXCEPTION_HANDLER"]` (`orders.exceptions.api_exception_handler`):
-код и HTTP-статус каждой ошибки заданы там же, где она поднимается, без
-отдельного словаря код → статус.
+код и HTTP-статус каждой ошибки заданы там же, где она поднимается.
 
 ## Расчёт и сохранение
 
@@ -150,9 +180,6 @@ DRF выполняет аутентификацию, CSRF, разбор JSON и 
 общий лимит за O(1), а ограничение `uses_count <= max_uses` защищает инвариант в БД.
 Журнал погашений остаётся источником аудита.
 Текущая схема нового проекта собрана в одной миграции `0001_initial`.
-
-`create_order()` сама отклоняет пустой `goods` (`ValueError`), не полагаясь
-только на `min_length=1` в сериализаторе.
 
 Проверка правил, заказ, погашение и строки записываются в одной транзакции.
 PostgreSQL блокирует выбранный `PromoCode` через `select_for_update`, поэтому
