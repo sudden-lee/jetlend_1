@@ -6,6 +6,8 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models
 from django.utils import timezone
 
+PROMO_CODE_PATTERN = r"\A[A-Za-z0-9_-]{1,64}\Z"
+
 
 def idempotency_expiry() -> datetime:
     return timezone.now() + timedelta(hours=24)
@@ -53,7 +55,7 @@ class PromoCode(models.Model):
         "код",
         max_length=64,
         unique=True,
-        validators=[RegexValidator(r"\A[A-Za-z0-9_-]{1,64}\Z")],
+        validators=[RegexValidator(PROMO_CODE_PATTERN)],
     )
     discount = models.DecimalField(
         "ставка скидки",

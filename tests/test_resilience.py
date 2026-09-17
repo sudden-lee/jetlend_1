@@ -41,7 +41,7 @@ def test_same_idempotency_key_rejects_different_payload(api_client, payload) -> 
     assert Order.objects.count() == 1
 
 
-@pytest.mark.parametrize("key", [None, "", "contains space", "x" * 129])
+@pytest.mark.parametrize("key", [None, "", "contains space", " padded ", "x" * 129])
 def test_idempotency_key_is_required_and_validated(api_client, payload, key) -> None:
     kwargs = {} if key is None else {"HTTP_IDEMPOTENCY_KEY": key}
     response = api_client.post(URL, payload, format="json", **kwargs)
@@ -96,6 +96,7 @@ def operational_error(sqlstate: str) -> OperationalError:
 
 def test_retry_is_bounded_to_transient_postgresql_errors() -> None:
     result = ({"order_id": 1}, False)
+    goods = [{"good_id": 1, "quantity": 1}]
     with (
         patch(
             "orders.services._create_order_once",
@@ -107,7 +108,7 @@ def test_retry_is_bounded_to_transient_postgresql_errors() -> None:
             create_order(
                 actor_id=1,
                 user_id=1,
-                goods=[],
+                goods=goods,
                 idempotency_key="retryable",
             )
             == result
@@ -119,12 +120,33 @@ def test_retry_is_bounded_to_transient_postgresql_errors() -> None:
 
 def test_unknown_database_error_is_not_retried() -> None:
     error = operational_error("08006")
+    goods = [{"good_id": 1, "quantity": 1}]
     with (
         patch("orders.services._create_order_once", side_effect=error) as create_once,
         patch("orders.services.time.sleep") as sleep,
         pytest.raises(OperationalError),
     ):
-        create_order(actor_id=1, user_id=1, goods=[], idempotency_key="not-retryable")
+        create_order(actor_id=1, user_id=1, goods=goods, idempotency_key="not-retryable")
 
     create_once.assert_called_once()
     sleep.assert_not_called()
+
+
+def test_empty_goods_is_rejected_before_touching_the_database() -> None:
+    with (
+        patch("orders.services._create_order_once") as create_once,
+        pytest.raises(ValueError, match="goods must not be empty"),
+    ):
+        create_order(actor_id=1, user_id=1, goods=[], idempotency_key="empty-goods")
+
+    create_once.assert_not_called()
+
+
+def test_unrecognized_database_error_is_not_swallowed_by_the_view(api_client, payload) -> None:
+    with (
+        patch("orders.services._create_order_once", side_effect=operational_error("08006")),
+        pytest.raises(OperationalError),
+    ):
+        post_order(api_client, payload, "db-down")
+
+    assert not Order.objects.exists()

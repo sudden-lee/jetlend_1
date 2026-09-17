@@ -87,4 +87,5 @@ REST_FRAMEWORK = {
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_THROTTLE_RATES": {"orders": "120/min"},
+    "EXCEPTION_HANDLER": "orders.exceptions.api_exception_handler",
 }
