@@ -1,4 +1,5 @@
 import json
+import uuid
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
@@ -9,7 +10,14 @@ from django.db import IntegrityError, transaction
 from django.test import Client
 from rest_framework.test import APIClient
 
-from orders.models import Good, Order, OrderItem, PromoCode, PromoCodeRedemption
+from orders.models import (
+    Good,
+    Order,
+    OrderIdempotencyKey,
+    OrderItem,
+    PromoCode,
+    PromoCodeRedemption,
+)
 from orders.services import OrderError, create_order
 from tests.conftest import NOW
 
@@ -18,8 +26,13 @@ URL = "/api/orders/"
 pytestmark = pytest.mark.django_db
 
 
-def post_order(client: APIClient, payload: object):
-    return client.post(URL, payload, format="json")
+def post_order(client: APIClient, payload: object, key: str | None = None):
+    return client.post(
+        URL,
+        payload,
+        format="json",
+        HTTP_IDEMPOTENCY_KEY=key or str(uuid.uuid4()),
+    )
 
 
 def assert_error(client: APIClient, payload: object, status: int, code: str) -> None:
@@ -58,6 +71,8 @@ def test_example_and_price_snapshot(api_client, user, catalog, promo, payload) -
     assert order.total == Decimal("180")
     assert order.discount == Decimal("0.1")
     assert order.promo_code_id == promo.pk
+    promo.refresh_from_db()
+    assert promo.uses_count == 1
     Good.objects.filter(pk=catalog["good"].pk).update(price=Decimal("200"))
     item = order.items.get()
     assert item.price == Decimal("100")
@@ -128,6 +143,7 @@ def test_promo_limit(api_client, user, other_user, catalog, promo, payload) -> N
             user_id=other_user.pk,
             goods=[{"good_id": catalog["good"].pk, "quantity": 1}],
             promo_code=promo.code,
+            idempotency_key="other-user-order",
         )
         assert_error(api_client, payload, 409, "promo_limit_reached")
 
@@ -249,6 +265,7 @@ def test_csrf_is_required_for_session_authentication(user, payload) -> None:
             json.dumps(payload),
             content_type="application/json",
             HTTP_X_CSRFTOKEN=token,
+            HTTP_IDEMPOTENCY_KEY="csrf-order",
         )
     assert response.status_code == 201, (
         response.wsgi_request.user.is_authenticated,
@@ -278,6 +295,7 @@ def test_item_failure_rolls_back_order_and_promo_usage(user, catalog, promo) -> 
         "user_id": user.pk,
         "goods": [{"good_id": catalog["good"].pk, "quantity": 2}],
         "promo_code": promo.code,
+        "idempotency_key": "rollback-order",
     }
     with patch("orders.services.now", return_value=NOW):
         with patch(
@@ -287,7 +305,7 @@ def test_item_failure_rolls_back_order_and_promo_usage(user, catalog, promo) -> 
                 create_order(**kwargs)
         assert not Order.objects.exists()
         assert not PromoCodeRedemption.objects.exists()
-        assert create_order(**kwargs)["total"] == Decimal("180")
+        assert create_order(**kwargs)[0]["total"] == Decimal("180")
 
 
 def test_promo_redemption_survives_order_deletion(user, catalog, promo) -> None:
@@ -296,11 +314,14 @@ def test_promo_redemption_survives_order_deletion(user, catalog, promo) -> None:
         "user_id": user.pk,
         "goods": [{"good_id": catalog["good"].pk, "quantity": 1}],
         "promo_code": promo.code,
+        "idempotency_key": "deletion-order",
     }
     with patch("orders.services.now", return_value=NOW):
-        result = create_order(**kwargs)
+        result, _ = create_order(**kwargs)
+        OrderIdempotencyKey.objects.all().delete()
         Order.objects.get(pk=result["order_id"]).delete()
         assert PromoCodeRedemption.objects.get().order_id is None
+        kwargs["idempotency_key"] = "deletion-order-retry"
         with pytest.raises(OrderError, match="already used"):
             create_order(**kwargs)
 

@@ -1,9 +1,14 @@
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from django.utils import timezone
+
+
+def idempotency_expiry() -> datetime:
+    return timezone.now() + timedelta(hours=24)
 
 
 class Category(models.Model):
@@ -61,6 +66,7 @@ class PromoCode(models.Model):
     max_uses = models.PositiveIntegerField(
         "максимум использований", validators=[MinValueValidator(1)]
     )
+    uses_count = models.PositiveIntegerField("использовано", default=0, editable=False)
     category = models.ForeignKey(
         Category,
         on_delete=models.PROTECT,
@@ -81,6 +87,10 @@ class PromoCode(models.Model):
             models.CheckConstraint(
                 condition=models.Q(max_uses__gte=1), name="promo_positive_limit"
             ),
+            models.CheckConstraint(
+                condition=models.Q(uses_count__lte=models.F("max_uses")),
+                name="promo_usage_within_limit",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -98,7 +108,7 @@ class Order(models.Model):
         blank=True,
         verbose_name="промокод",
     )
-    created_at = models.DateTimeField("создан", auto_now_add=True)
+    created_at = models.DateTimeField("создан", auto_now_add=True, db_index=True)
     price = models.DecimalField("стоимость до скидки", max_digits=16, decimal_places=2)
     discount = models.DecimalField(
         "фактическая ставка скидки", max_digits=5, decimal_places=4, default=0
@@ -153,6 +163,36 @@ class PromoCodeRedemption(models.Model):
 
     def __str__(self) -> str:
         return f"Погашение №{self.pk}" if self.pk else "Новое погашение"
+
+
+class OrderIdempotencyKey(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, verbose_name="пользователь"
+    )
+    key = models.CharField("ключ", max_length=128)
+    request_hash = models.CharField("хеш запроса", max_length=64, editable=False)
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="idempotency_key",
+        verbose_name="заказ",
+    )
+    created_at = models.DateTimeField("создан", auto_now_add=True)
+    expires_at = models.DateTimeField(
+        "истекает", default=idempotency_expiry, db_index=True, editable=False
+    )
+
+    class Meta:
+        verbose_name = "ключ идемпотентности"
+        verbose_name_plural = "ключи идемпотентности"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "key"], name="order_idempotency_user_key_once"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id}: {self.key}"
 
 
 class OrderItem(models.Model):

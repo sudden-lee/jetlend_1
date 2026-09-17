@@ -2,9 +2,14 @@ from django.core.exceptions import RequestDataTooBig
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from orders.serializers import OrderCreateSerializer, OrderOutputSerializer
+from orders.serializers import (
+    IdempotencyKeySerializer,
+    OrderCreateSerializer,
+    OrderOutputSerializer,
+)
 from orders.services import OrderError, create_order
 
 ORDER_ERROR_STATUS = {
@@ -15,6 +20,8 @@ ORDER_ERROR_STATUS = {
     "promo_not_found": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "promo_expired": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "promo_not_applicable": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "idempotency_conflict": status.HTTP_409_CONFLICT,
+    "idempotency_incomplete": status.HTTP_409_CONFLICT,
 }
 
 
@@ -24,6 +31,9 @@ def error_response(code: str, message: str, status_code: int, **extra) -> Respon
 
 
 class OrderCreateAPIView(APIView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "orders"
+
     def post(self, request: Request) -> Response:
         try:
             serializer = OrderCreateSerializer(data=request.data)
@@ -40,8 +50,23 @@ class OrderCreateAPIView(APIView):
                 status.HTTP_400_BAD_REQUEST,
                 details=serializer.errors,
             )
+        key_serializer = IdempotencyKeySerializer(
+            data={"key": request.headers.get("Idempotency-Key")}
+        )
+        if not key_serializer.is_valid():
+            return error_response(
+                "invalid_idempotency_key",
+                "Idempotency-Key must contain 1-128 ASCII letters, digits, '.', '_', ':' or '-'.",
+                status.HTTP_400_BAD_REQUEST,
+            )
         try:
-            result = create_order(actor_id=request.user.pk, **serializer.validated_data)
+            result, replayed = create_order(
+                actor_id=request.user.pk,
+                idempotency_key=key_serializer.validated_data["key"],
+                **serializer.validated_data,
+            )
         except OrderError as exc:
             return error_response(exc.code, str(exc), ORDER_ERROR_STATUS[exc.code])
-        return Response(OrderOutputSerializer(result).data, status=status.HTTP_201_CREATED)
+        response = Response(OrderOutputSerializer(result).data, status=status.HTTP_201_CREATED)
+        response["Idempotency-Replayed"] = str(replayed).lower()
+        return response

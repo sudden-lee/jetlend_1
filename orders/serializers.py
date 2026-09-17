@@ -54,6 +54,10 @@ class OrderCreateSerializer(StrictSerializer):
         return goods
 
 
+class IdempotencyKeySerializer(StrictSerializer):
+    key = StrictRegexField(r"\A[A-Za-z0-9._:-]{1,128}\Z")
+
+
 class OrderGoodOutputSerializer(serializers.Serializer):
     good_id = serializers.IntegerField()
     quantity = serializers.IntegerField()
